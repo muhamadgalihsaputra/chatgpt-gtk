@@ -144,8 +144,8 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         # Key controller for shortcuts
         self.setup_shortcuts()
 
-        # Initial Load
-        self.web_view.load_uri(DEFAULT_URL)
+        # Defer initial load so window displays instantly without blocking
+        GLib.idle_add(lambda: self.web_view.load_uri(DEFAULT_URL))
 
     def setup_menu(self):
         menu = Gio.Menu()
