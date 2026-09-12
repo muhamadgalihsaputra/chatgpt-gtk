@@ -71,9 +71,6 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         self.settings.set_enable_webrtc(True)
         self.settings.set_enable_media_stream(True)
         self.settings.set_javascript_can_access_clipboard(True)
-        self.settings.set_hardware_acceleration_policy(
-            WebKit.HardwareAccelerationPolicy.ON_DEMAND
-        )
 
         # Main Layout Box
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
