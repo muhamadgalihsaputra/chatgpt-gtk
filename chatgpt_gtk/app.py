@@ -72,7 +72,7 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         self.settings.set_enable_media_stream(True)
         self.settings.set_javascript_can_access_clipboard(True)
         self.settings.set_hardware_acceleration_policy(
-            WebKit.HardwareAccelerationPolicy.ALWAYS
+            WebKit.HardwareAccelerationPolicy.ON_DEMAND
         )
 
         # Main Layout Box
@@ -302,7 +302,6 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         return popup_web_view
 
     def on_permission_request(self, web_view, request):
-        # Auto-grant clipboard, notification, audio if requested by ChatGPT
         if isinstance(request, (WebKit.UserMediaPermissionRequest,
                                 WebKit.DeviceInfoPermissionRequest,
                                 WebKit.NotificationPermissionRequest)):
@@ -322,7 +321,7 @@ class ChatGPTApp(Adw.Application):
     def __init__(self):
         super().__init__(
             application_id=APP_ID,
-            flags=Gio.ApplicationFlags.DEFAULT_FLAGS
+            flags=Gio.ApplicationFlags.HANDLES_OPEN
         )
         self.win = None
 
@@ -334,6 +333,15 @@ class ChatGPTApp(Adw.Application):
         if not self.win:
             self.win = ChatGPTWindow(self)
         self.win.present()
+
+    def do_open(self, files, hint):
+        self.do_activate()
+        if files:
+            for f in files:
+                uri = f.get_uri()
+                if uri and uri.startswith(("http://", "https://")):
+                    self.win.web_view.load_uri(uri)
+                    break
 
     def setup_actions(self):
         def add_action(name, callback):
