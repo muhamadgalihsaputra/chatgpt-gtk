@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import sys
+import os
+
+# Add repo root to sys.path if run directly from repository
+repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if repo_dir not in sys.path:
+    sys.path.insert(0, repo_dir)
+
+from chatgpt_gtk.app import main
+
+if __name__ == "__main__":
+    sys.exit(main())

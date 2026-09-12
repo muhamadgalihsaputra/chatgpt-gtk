@@ -1,0 +1,18 @@
+[Desktop Entry]
+Name=ChatGPT
+GenericName=AI Chat Assistant
+Comment=Lightweight, native GTK4/Libadwaita desktop client for ChatGPT
+Exec=/home/galyarder/projects/chatgpt-gtk/bin/chatgpt-gtk %u
+Icon=chatgpt-gtk
+Terminal=false
+Type=Application
+Categories=Network;Utility;Chat;InstantMessaging;
+StartupWMClass=io.github.chatgpt_gtk.desktop
+Keywords=chatgpt;ai;openai;chat;assistant;
+MimeType=x-scheme-handler/chatgpt;
+
+Actions=NewChat;
+
+[Desktop Action NewChat]
+Name=Chat Baru
+Exec=/home/galyarder/projects/chatgpt-gtk/bin/chatgpt-gtk
