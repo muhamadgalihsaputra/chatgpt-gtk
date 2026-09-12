@@ -7,8 +7,9 @@ filtered_args = [arg for arg in sys.argv if arg not in ("%u", "%U")]
 if not filtered_args:
     filtered_args = [sys.argv[0]]
 
-# Add repo root to sys.path if run directly from repository
-repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Resolve symlink to real project directory
+real_script_path = os.path.realpath(__file__)
+repo_dir = os.path.dirname(os.path.dirname(real_script_path))
 if repo_dir not in sys.path:
     sys.path.insert(0, repo_dir)
 
