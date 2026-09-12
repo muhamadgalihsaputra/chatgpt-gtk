@@ -8,15 +8,30 @@ gi.require_version('Adw', '1')
 gi.require_version('WebKit', '6.0')
 gi.require_version('GLib', '2.0')
 gi.require_version('Gdk', '4.0')
+gi.require_version('Gio', '2.0')
 
 from gi.repository import Gtk, Adw, WebKit, GLib, Gdk, Gio
+from chatgpt_gtk.tray import StatusNotifierTray
 
 APP_ID = "io.github.chatgpt_gtk.desktop"
 DEFAULT_URL = "https://chatgpt.com"
+
+# Modern Safari on macOS matches WebKitGTK's native JavaScriptCore engine,
+# preventing Cloudflare Turnstile bot-detection mismatches (missing window.chrome,
+# missing Chromium userAgentData, Apple vendor signature).
 USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/133.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/18.3 Safari/605.1.15"
 )
+
+STEALTH_SCRIPT = """
+try {
+    Object.defineProperty(navigator, 'webdriver', {
+        get: () => false,
+        configurable: true
+    });
+} catch(e) {}
+"""
 
 DATA_DIR = os.path.expanduser("~/.local/share/chatgpt-gtk")
 CACHE_DIR = os.path.expanduser("~/.cache/chatgpt-gtk")
@@ -54,6 +69,7 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         if state.get("is_maximized", False):
             self.maximize()
 
+        # Intercept window close -> hide to system tray
         self.connect("close-request", self.on_close_request)
 
         # Persistent Network Session
@@ -64,6 +80,11 @@ class ChatGPTWindow(Adw.ApplicationWindow):
             cache_directory=CACHE_DIR
         )
 
+        # Disable ITP and ensure cross-origin cookies (crucial for Cloudflare / Auth0 MFA)
+        self.session.set_itp_enabled(False)
+        cookie_manager = self.session.get_cookie_manager()
+        cookie_manager.set_accept_policy(WebKit.CookieAcceptPolicy.ALWAYS)
+
         # WebKit Settings
         self.settings = WebKit.Settings()
         self.settings.set_user_agent(USER_AGENT)
@@ -71,6 +92,16 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         self.settings.set_enable_webrtc(True)
         self.settings.set_enable_media_stream(True)
         self.settings.set_javascript_can_access_clipboard(True)
+        self.settings.set_javascript_can_open_windows_automatically(True)
+
+        # User Content Manager for Anti-Bot / Stealth script injection
+        self.user_content_manager = WebKit.UserContentManager()
+        stealth_user_script = WebKit.UserScript(
+            source=STEALTH_SCRIPT,
+            injected_frames=WebKit.UserContentInjectedFrames.ALL_FRAMES,
+            injection_time=WebKit.UserScriptInjectionTime.START
+        )
+        self.user_content_manager.add_script(stealth_user_script)
 
         # Main Layout Box
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -124,7 +155,10 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         self.main_box.append(self.progress_bar)
 
         # Primary WebView
-        self.web_view = WebKit.WebView(network_session=self.session)
+        self.web_view = WebKit.WebView(
+            network_session=self.session,
+            user_content_manager=self.user_content_manager
+        )
         self.web_view.set_settings(self.settings)
         self.web_view.set_vexpand(True)
         self.web_view.set_hexpand(True)
@@ -164,6 +198,7 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         # App Section
         app_section = Gio.Menu()
         app_section.append("Tentang ChatGPT GTK", "app.about")
+        app_section.append("Sembunyikan ke Tray", "app.hide_to_tray")
         app_section.append("Keluar (Ctrl+Q)", "app.quit")
         menu.append_section(None, app_section)
 
@@ -193,6 +228,9 @@ class ChatGPTWindow(Adw.ApplicationWindow):
                 return True
             elif keyval in (Gdk.KEY_q, Gdk.KEY_Q):
                 self.app.quit()
+                return True
+            elif keyval in (Gdk.KEY_w, Gdk.KEY_W):
+                self.set_visible(False)
                 return True
         elif alt:
             if keyval == Gdk.KEY_Left:
@@ -283,7 +321,10 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         popup_box.append(popup_header)
 
         # Related view automatically inherits the parent view's network session
-        popup_web_view = WebKit.WebView(related_view=web_view)
+        popup_web_view = WebKit.WebView(
+            related_view=web_view,
+            user_content_manager=self.user_content_manager
+        )
         popup_web_view.set_settings(self.settings)
         popup_web_view.set_vexpand(True)
         popup_web_view.set_hexpand(True)
@@ -307,11 +348,15 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         return False
 
     def on_close_request(self, _):
+        # Save window dimensions
         width = self.get_width()
         height = self.get_height()
         is_max = self.is_maximized()
         save_window_state(width, height, is_max)
-        return False
+
+        # Hide to system tray instead of terminating process
+        self.set_visible(False)
+        return True
 
 
 class ChatGPTApp(Adw.Application):
@@ -321,6 +366,7 @@ class ChatGPTApp(Adw.Application):
             flags=Gio.ApplicationFlags.HANDLES_OPEN
         )
         self.win = None
+        self.tray = None
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -329,6 +375,8 @@ class ChatGPTApp(Adw.Application):
     def do_activate(self):
         if not self.win:
             self.win = ChatGPTWindow(self)
+            self.tray = StatusNotifierTray(self, self.win)
+        self.win.set_visible(True)
         self.win.present()
 
     def do_open(self, files, hint):
@@ -352,6 +400,7 @@ class ChatGPTApp(Adw.Application):
         add_action("inspect", self.action_inspect)
         add_action("copy_url", self.action_copy_url)
         add_action("clear_cache", self.action_clear_cache)
+        add_action("hide_to_tray", lambda *_: self.win.set_visible(False) if self.win else None)
         add_action("about", self.action_about)
         add_action("quit", lambda *_: self.quit())
 
@@ -380,7 +429,7 @@ class ChatGPTApp(Adw.Application):
             developer_name="Galyarder",
             version="0.1.0",
             copyright="© 2026 Galyarder",
-            comments="Lightweight, native GTK4/Libadwaita desktop client for ChatGPT web.",
+            comments="Lightweight, native GTK4/Libadwaita desktop client for ChatGPT web with system tray.",
             website="https://chatgpt.com",
             issue_url="https://github.com/galyarder/chatgpt-gtk"
         )
