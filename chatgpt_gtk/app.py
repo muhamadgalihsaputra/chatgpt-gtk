@@ -431,7 +431,7 @@ class ChatGPTApp(Adw.Application):
             copyright="© 2026 Galyarder",
             comments="Lightweight, native GTK4/Libadwaita desktop client for ChatGPT web with system tray.",
             website="https://chatgpt.com",
-            issue_url="https://github.com/galyarder/chatgpt-gtk"
+            issue_url="https://github.com/muhamadgalihsaputra/chatgpt-gtk"
         )
         about.present(self.win)
 
