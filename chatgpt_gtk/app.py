@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 import gi
 
 gi.require_version('Gtk', '4.0')
@@ -33,10 +34,21 @@ try {
 } catch(e) {}
 """
 
+# Auto-focus the chat input field after every page load.
+FOCUS_SCRIPT = """
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        var el = document.querySelector('textarea, [contenteditable="true"], input[type="text"], #prompt-textarea');
+        if (el) { el.focus(); }
+    }, 300);
+});
+"""
+
 DATA_DIR = os.path.expanduser("~/.local/share/chatgpt-gtk")
 CACHE_DIR = os.path.expanduser("~/.cache/chatgpt-gtk")
 CONFIG_DIR = os.path.expanduser("~/.config/chatgpt-gtk")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "window_state.json")
+DOWNLOAD_DIR = os.path.expanduser("~/Downloads")
 
 
 def load_window_state():
@@ -68,6 +80,10 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         self.set_default_size(state.get("width", 1080), state.get("height", 800))
         if state.get("is_maximized", False):
             self.maximize()
+
+        # Tray notification dedup state
+        self._last_notified_title = None
+        self.connect("notify::visible", self.on_visibility_changed)
 
         # Intercept window close -> hide to system tray
         self.connect("close-request", self.on_close_request)
@@ -106,6 +122,14 @@ class ChatGPTWindow(Adw.ApplicationWindow):
             injection_time=WebKit.UserScriptInjectionTime.START
         )
         self.user_content_manager.add_script(stealth_user_script)
+
+        # Auto-focus chat input on every page load
+        focus_user_script = WebKit.UserScript(
+            source=FOCUS_SCRIPT,
+            injected_frames=WebKit.UserContentInjectedFrames.ALL_FRAMES,
+            injection_time=WebKit.UserScriptInjectionTime.END
+        )
+        self.user_content_manager.add_script(focus_user_script)
 
         # Main Layout Box
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -175,6 +199,7 @@ class ChatGPTWindow(Adw.ApplicationWindow):
         self.web_view.connect("load-changed", self.on_load_changed)
         self.web_view.connect("create", self.on_create_popup)
         self.web_view.connect("permission-request", self.on_permission_request)
+        self.web_view.connect("download-started", self.on_download_started)
 
         # Key controller for shortcuts
         self.setup_shortcuts()
@@ -294,6 +319,24 @@ class ChatGPTWindow(Adw.ApplicationWindow):
             self.title_widget.set_title(title)
             self.set_title(title)
 
+            # Tray notification: send native GNOME notification when window is hidden
+            # and the page title changes (common pattern for unread/reply indicators).
+            if not self.get_visible() and title != self._last_notified_title:
+                self._last_notified_title = title
+                match = re.match(r"^[\(\u2022\s]*(\d+)[\)\s\u2022]", title)
+                body = f"{match.group(1)} pesan baru" if match else title
+                notif = Gio.Notification.new("ChatGPT")
+                notif.set_body(body)
+                notif.set_priority(Gio.NotificationPriority.HIGH)
+                self.app.send_notification("chatgpt-reply", notif)
+
+    def on_visibility_changed(self, *_):
+        # Reset notification dedup state and withdraw any active notification
+        # once the window becomes visible again.
+        if self.get_visible():
+            self._last_notified_title = None
+            self.app.withdraw_notification("chatgpt-reply")
+
     def on_uri_changed(self, web_view, _):
         uri = web_view.get_uri()
         if uri:
@@ -350,6 +393,41 @@ class ChatGPTWindow(Adw.ApplicationWindow):
             request.allow()
             return True
         return False
+
+    def on_download_started(self, web_view, download):
+        """Route downloads to ~/Downloads with non-clobbering filenames."""
+        try:
+            os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+            suggested = ""
+            response = download.get_response()
+            if response:
+                suggested = response.get_suggested_filename() or ""
+            if not suggested:
+                request = download.get_request()
+                if request:
+                    uri = request.get_uri() or ""
+                    suggested = uri.rsplit("/", 1)[-1] or "download"
+            if not suggested:
+                suggested = "download"
+
+            dest_path = os.path.join(DOWNLOAD_DIR, suggested)
+            base, ext = os.path.splitext(dest_path)
+            counter = 1
+            while os.path.exists(dest_path):
+                dest_path = f"{base} ({counter}){ext}"
+                counter += 1
+
+            download.set_destination(GLib.filename_to_uri(dest_path))
+            download.connect(
+                "finished",
+                lambda d: print(f"[chatgpt-gtk] Download selesai: {dest_path}")
+            )
+            download.connect(
+                "failed",
+                lambda d, err: print(f"[chatgpt-gtk] Download gagal: {err.message}")
+            )
+        except Exception as e:
+            print(f"[chatgpt-gtk] Download error: {e}")
 
     def on_close_request(self, _):
         # Save window dimensions
